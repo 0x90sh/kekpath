@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <iostream>
 #include <string>
@@ -21,6 +21,8 @@
 #include <unordered_set>
 #include <queue>
 #include <condition_variable>
+#include <future>
+#include <cctype>
 using namespace std;
 
 mutex mtx;
@@ -237,7 +239,7 @@ void printRequestDump(const WebRequestResult& result) {
 
     cout << padding << whiteBoldText << "Host: " << resetText << result.targetHost << endl;
 
-    cout << padding << whiteBoldText << "Time: " << resetText << result.responseTimeMs << " ms" << endl;
+    cout << padding << whiteBoldText << "Time: " << resetText << result.responseTimeMs << " ms." << endl;
 
     cout << padding << whiteBoldText << "Status-Code: " << resetText
         << result.statusCode << " - " << getStatusDescription(result.statusCode) << endl;
@@ -276,7 +278,6 @@ void printRequestDump(const WebRequestResult& result) {
 
     dbg("Request dump complete.");
 }
-
 
 string say(const string& msg, const string& status = "") {
     const string redText = "\033[1;31m";
@@ -331,6 +332,19 @@ string say(const string& msg, const string& status = "") {
     return "";
 }
 
+void asyncFileWrite(const std::string& link, const std::string& status_code) {
+    std::ofstream outFile;
+    outFile.open(config::outputpath, std::ios::app);
+    if (outFile.is_open()) {
+        outFile << status_code << ";" << link << std::endl;
+        outFile.close();
+        say(status_code + " " + link, "link");
+    }
+    else {
+        dbg("Failed to open output file: " + config::outputpath);
+    }
+}
+
 void checkLink(const std::string& link, const std::string& status_code) {
     {
         std::lock_guard<std::mutex> lock(linkMutex);
@@ -342,18 +356,8 @@ void checkLink(const std::string& link, const std::string& status_code) {
 
     int sc = std::stoi(status_code);
 
-    if ((sc >= 200 && sc < 300) || (sc >= 500) || (sc >= 401 && sc <= 403)) {
-        std::lock_guard<std::mutex> fileLock(fileMutex);
-        std::ofstream outFile;
-        outFile.open(config::outputpath, std::ios::app);
-        if (outFile.is_open()) {
-            outFile << status_code << ";" << link << std::endl;
-            outFile.close();
-            say(status_code + " " + link, "link");
-        }
-        else {
-            dbg("Failed to open output file: " + config::outputpath);
-        }
+    if ((sc >= 200 && sc < 300) || (sc >= 500) || (sc >= 401 && sc <= 403) || (sc == 302)) {
+        auto future = std::async(std::launch::async, asyncFileWrite, link, status_code);
     }
 }
 
@@ -414,10 +418,7 @@ WebRequestResult performWebRequest(const string& fullUrl, long timeoutMs = 5000,
         return result;
     }
 
-    dbg("Setting URL: " + fullUrl);
     curl_easy_setopt(curl, CURLOPT_URL, fullUrl.c_str());
-
-    dbg("Setting response timeout to " + to_string(timeoutMs) + " milliseconds");
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeoutMs);
 
     string user_agent = config::default_ua;
@@ -547,6 +548,10 @@ WebRequestResult performWebRequest(const string& fullUrl, long timeoutMs = 5000,
     return result;
 }
 
+std::future<WebRequestResult> asyncWebRequest(const string& fullUrl, long timeoutMs = 5000, bool redirectCheck = true) {
+    return std::async(std::launch::async, performWebRequest, fullUrl, timeoutMs, redirectCheck);
+}
+
 void parseUrl(const string& url, string& protocol, string& host, string& path) {
     const regex url_regex(R"(^(http|https)://([\w\.-]+)(:\d+)?(/.*)?$)");
     smatch url_match_result;
@@ -568,7 +573,9 @@ void requestWorker(const string& url, std::atomic<long>& totalResponseTime, std:
     while (!stopFlag) {
         auto requestStartTime = std::chrono::steady_clock::now();
 
-        WebRequestResult result = performWebRequest(url, config::defaultTimeout);
+        auto futureResult = asyncWebRequest(url, config::defaultTimeout);
+        WebRequestResult result = futureResult.get();
+
         if (!result.status) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
@@ -625,10 +632,12 @@ void displayProgressBar(int progress, int totalRequests, const std::vector<int>&
 
     std::cout << "\n";
 
-    for (size_t i = 0; i < requestsPerThread.size(); ++i) {
-        std::cout << " Thread " << i << ": " << requestsPerThread[i];
-        if (i != requestsPerThread.size() - 1) {
-            std::cout << " |";
+    if (requestsPerThread.size() <= 6) {
+        for (size_t i = 0; i < requestsPerThread.size(); ++i) {
+            std::cout << " Thread " << i << ": " << requestsPerThread[i];
+            if (i != requestsPerThread.size() - 1) {
+                std::cout << " |";
+            }
         }
     }
 
@@ -643,7 +652,7 @@ bool probeTarget(const string& url) {
     bool clean = false;
     std::vector<int> requestsPerThread(numThreads, 0);
 
-    say("Initializing target coonnectivity probing...");
+    say("Initializing target connectivity probing...");
     auto startTime = std::chrono::steady_clock::now();
     std::vector<std::thread> threads;
 
@@ -686,12 +695,12 @@ bool probeTarget(const string& url) {
         if (round_rl < config::maxrps) {
             config::maxrps = round_rl;
         }
-        if (longestResponseTime.load() < 9900 && longestResponseTime.load() >= 1400) {
+        if (longestResponseTime.load() < 9900 && longestResponseTime.load() >= 650) {
             config::defaultTimeout = longestResponseTime.load() + 100;
             dbg("Setting default timeout to " + std::to_string(config::defaultTimeout) + " ms.");
         }
 
-        if (longestResponseTime.load() < 1400) config::defaultTimeout = 1500;
+        if (longestResponseTime.load() < 650) config::defaultTimeout = 750;
     }
 
     if (config::maxrps >= 5) {
@@ -705,25 +714,51 @@ bool probeTarget(const string& url) {
     say("Setting timeout => " + std::to_string(config::defaultTimeout) + " ms.");
     say("Setting max. ratelimit => " + std::to_string(config::maxrps) + " / s");
     if (config::maxrps >= 20) {
-        say("Rate ist quiet high, use -rl to set a fixed amount. (enter to continue)", "get");
+        say("Rate is quite high, use -rl to set a fixed amount. (enter to continue)", "get");
     }
 
     return clean;
 }
 bool validResponse(WebRequestResult result) {
-    if (result.status and result.statusCode >= 200 and result.statusCode < 300) {
+    if (result.status && result.statusCode >= 200 && result.statusCode < 300) {
         return true;
     }
     else {
         return false;
     }
 }
+std::string decodeUnicodeEscapes(const std::string& url) {
+    std::string decodedUrl;
+    std::regex unicodeRegex(R"(\\u([0-9a-fA-F]{4}))");
+    std::smatch match;
+    std::string::const_iterator searchStart(url.cbegin());
 
+    while (std::regex_search(searchStart, url.cend(), match, unicodeRegex)) {
+        decodedUrl.append(searchStart, match.prefix().second);
+        int charCode = std::stoi(match[1].str(), nullptr, 16);
+        decodedUrl += static_cast<char>(charCode);
+        searchStart = match.suffix().first;
+    }
 
+    decodedUrl.append(searchStart, url.cend());
+    return decodedUrl;
+}
 
 std::string sanitizeUrl(const std::string& url) {
-    size_t fragmentPos = url.find('#');
-    std::string cleanUrl = (fragmentPos != std::string::npos) ? url.substr(0, fragmentPos) : url;
+    std::string cleanUrl = decodeUnicodeEscapes(url);
+
+    size_t splitPos = cleanUrl.find(" o ");
+    if (splitPos != std::string::npos) {
+        cleanUrl = cleanUrl.substr(0, splitPos);
+    }
+
+    size_t angleBracketPos = cleanUrl.find("\">");
+    if (angleBracketPos != std::string::npos) {
+        cleanUrl = cleanUrl.substr(0, angleBracketPos);
+    }
+
+    size_t fragmentPos = cleanUrl.find('#');
+    cleanUrl = (fragmentPos != std::string::npos) ? cleanUrl.substr(0, fragmentPos) : cleanUrl;
 
     size_t jsVerPos = cleanUrl.find("js?ver=");
     if (jsVerPos != std::string::npos) {
@@ -733,7 +768,7 @@ std::string sanitizeUrl(const std::string& url) {
         size_t queryPos = cleanUrl.find('?');
         size_t illegalCharPos = std::string::npos;
 
-        const std::string illegalChars = "{}|\\^[]*()<>;`'\"&>";
+        const std::string illegalChars = "{}|\\^[]*$()<>;'\"&>";
 
         for (size_t i = 0; i < cleanUrl.size(); ++i) {
             if (queryPos != std::string::npos && i >= queryPos) {
@@ -755,16 +790,20 @@ std::string sanitizeUrl(const std::string& url) {
                 cleanUrl = cleanUrl.substr(0, ampersandPos);
             }
         }
+    }
 
-        size_t closingAnglePos = cleanUrl.find('>');
-        if (closingAnglePos != std::string::npos) {
-            cleanUrl = cleanUrl.substr(0, closingAnglePos);
-        }
+    const std::string trailingIllegalChars = " \"";
+    size_t endPos = cleanUrl.find_last_not_of(trailingIllegalChars);
+    if (endPos != std::string::npos) {
+        cleanUrl = cleanUrl.substr(0, endPos + 1);
+    }
+
+    if (!cleanUrl.empty() && (cleanUrl.back() == '?' || cleanUrl.back() == '$' || cleanUrl.back() == '\'')) {
+        cleanUrl.pop_back();
     }
 
     return cleanUrl;
 }
-
 
 bool isHostAllowed(const std::string& url) {
     std::regex hostRegex(R"(^(http|https)://([\w\.-]+))");
@@ -820,9 +859,8 @@ void parseRobotsTxt(const std::string& robotsTxtContent) {
     }
 }
 
-
 void calcAttackVector() {
-    say("Preparing enumaration, scanning for robots.txt & sitemap.");
+    say("Preparing enumeration, scanning for robots.txt & sitemap.");
     addLink(target::targetUrl + "/");
     addLink(target::targetUrl + target::startingPath);
     WebRequestResult robots_result = performWebRequest(target::targetUrl + "/robots.txt", config::defaultTimeout);
@@ -851,9 +889,8 @@ void calcAttackVector() {
             }
         }
     }
-    if (target::sitemapFound)say("Found sitemap...");
+    if (target::sitemapFound) say("Found sitemap...");
 }
-
 
 std::string parseHost(const std::string& url) {
     const std::regex host_regex(R"(^(?:http[s]?://)?([^:/\s]+))");
@@ -881,7 +918,6 @@ std::vector<std::string> parseLinks(const std::string& responseBody, const std::
     for (auto i = links_begin; i != links_end; ++i) {
         std::smatch match = *i;
         std::string url = match.str(2);
-
 
         if (url.find("http://") != 0 && url.find("https://") != 0) {
             if (url.front() == '/') {
@@ -930,7 +966,6 @@ std::vector<std::string> parseLinks(const std::string& responseBody, const std::
     return foundLinks;
 }
 
-
 void enforceRateLimit() {
     std::unique_lock<std::mutex> lock(rateLimitMutex);
     auto now = std::chrono::steady_clock::now();
@@ -947,6 +982,7 @@ void enforceRateLimit() {
     lastRequestTime = std::chrono::steady_clock::now();
     requestsMade++;
 }
+
 void workerThread() {
     const std::unordered_set<std::string> skipExtensions = {
         ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".ico",
@@ -1018,7 +1054,8 @@ void workerThread() {
         enforceRateLimit();
 
         dbg("Performing web request...");
-        WebRequestResult result = performWebRequest(currentLink, config::defaultTimeout, false);
+        auto futureResult = asyncWebRequest(currentLink, config::defaultTimeout, false);
+        WebRequestResult result = futureResult.get();
 
         if (result.status) {
             dbg("Web request succeeded. Checking link...");
