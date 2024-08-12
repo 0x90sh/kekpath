@@ -15,6 +15,8 @@ KekPath is a powerful and customizable recursive web scanner designed to crawl w
 - **Output Control**: Save scan results to a custom file path or use the default naming convention with a timestamp.
 - **Debug Mode**: Enable detailed debug output to monitor the scanning process in real-time.
 
+![Usage Screenshot](usage.png)
+
 ## Installation
 
 ### Prerequisites
