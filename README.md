@@ -6,6 +6,7 @@ KekPath is a powerful and customizable recursive web scanner designed to crawl w
 ## Features
 
 - **Recursive Web Scanning**: Crawl websites recursively blazingly fast to capture and analyze all available links, resources, and endpoints.
+- **Connectivity probing**: Probes the connectivity and calculates optimal request rate and timeout, also auto adjusts rate and timeout if connectivity issues detected. (Ex. when web server overwhelmed)
 - **Customizable Threading**: Adjust the number of concurrent threads (1-200) to optimize scanning speed.
 - **Rate Limiting**: Control the number of requests per second to avoid triggering anti-scraping mechanisms or overwhelming the target server.
 - **User-Agent Randomization**: Randomize User-Agent strings to simulate requests from different browsers, enhancing stealth during scans.
