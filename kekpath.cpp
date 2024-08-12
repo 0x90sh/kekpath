@@ -1,4 +1,4 @@
-﻿#include "kekpath.h"
+#include "kekpath.h"
 
 int main(int argc, char* argv[]) {
     string url;
@@ -105,8 +105,8 @@ int main(int argc, char* argv[]) {
             threads = argv[++i];
             try {
                 int numThreads = std::stoi(threads);
-                if (numThreads < 1 || numThreads > 5) {
-                    say("Number of threads must be between 1 and 5.", "err");
+                if (numThreads < 1 || numThreads > 200) {
+                    say("Number of threads must be between 1 and 200.", "err");
                     return 1;
                 }
                 config::numThreads = numThreads;
