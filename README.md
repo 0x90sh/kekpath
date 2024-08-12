@@ -88,7 +88,7 @@ KekPath provides a range of options to customize your web scanning. Below are so
 - `-t <TIMEOUT>` : Set the request timeout in milliseconds (500-10000)
 - `-ua <USER_AGENT>` : Set the User-Agent string (or use 'rand' for random)
 - `-dbg` : Enable debug mode
-- `-tr <THREADS>` : Set the number of threads (1-5)
+- `-tr <THREADS>` : Set the number of threads (1-200)
 - `-rl <RATE>` : Set the max request rate per second (1-50)
 - `-n <INTERFACE>` : Specify the network interface to use
 - `-o <OUTPUT>` : Specify the output file path (if not set, default naming is used)
