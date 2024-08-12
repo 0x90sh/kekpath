@@ -18,7 +18,7 @@ KekPath is a powerful and customizable recursive web scanner designed to crawl w
 
 ![Usage Screenshot](usage.png)
 
-![Usage Vid](usage.mp4)
+[Usage Video](https://github.com/0x90sh/kekpath/raw/main/usage.mp4)
 
 ## Installation
 
